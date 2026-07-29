@@ -17,6 +17,8 @@ class Attendance extends Model
         'attendance_date',
         'check_in_at',
         'check_out_at',
+        'check_in_photo_path',
+        'check_out_photo_path',
         'check_in_latitude',
         'check_in_longitude',
         'check_in_accuracy',

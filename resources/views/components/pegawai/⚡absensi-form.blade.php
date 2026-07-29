@@ -5,32 +5,30 @@ use App\Models\Attendance;
 use App\Models\Schedule;
 use App\Enums\AttendanceStatus;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 new class extends Component
 {
-    public $latitude = null;
-    public $longitude = null;
-    public $accuracy = null;
+    public $photo = null;
     public $notes = '';
-    public $locationError = '';
-    public $distance = null;
 
-    protected $listeners = ['coordinatesUpdated' => 'updateCoordinates'];
-
-    public function calculateDistance($lat1, $lon1, $lat2, $lon2)
+    private function savePhoto($base64Data, $typePrefix = 'photo')
     {
-        $earthRadius = 6371000; // Earth radius in meters
-
-        $latDelta = deg2rad($lat2 - $lat1);
-        $lonDelta = deg2rad($lon2 - $lon1);
-
-        $a = sin($latDelta / 2) * sin($latDelta / 2) +
-             cos(deg2rad($lat1)) * cos(deg2rad($lat2)) *
-             sin($lonDelta / 2) * sin($lonDelta / 2);
-
-        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
-
-        return $earthRadius * $c; // returns distance in meters
+        if (preg_match('/^data:image\/(\w+);base64,/', $base64Data, $typeMatch)) {
+            $base64Data = substr($base64Data, strpos($base64Data, ',') + 1);
+            $ext = strtolower($typeMatch[1]);
+            if (!in_array($ext, ['jpg', 'jpeg', 'png', 'webp'])) {
+                $ext = 'jpg'; // fallback
+            }
+            $base64Data = str_replace(' ', '+', $base64Data);
+            $imageName = $typePrefix . '_' . time() . '_' . Str::random(10) . '.' . $ext;
+            $path = 'attendances/' . $imageName;
+            
+            Storage::disk('public')->put($path, base64_decode($base64Data));
+            return $path;
+        }
+        throw new \Exception('Data foto tidak valid.');
     }
 
     public function checkIn()
@@ -76,25 +74,13 @@ new class extends Component
                 return;
             }
 
-            // 4. Validate location if enabled
-            if ($schedule->location_validation_enabled) {
-                if (is_null($this->latitude) || is_null($this->longitude)) {
-                    session()->flash('error', 'Lokasi tidak terdeteksi. Silakan izinkan akses GPS di browser Anda.');
-                    return;
-                }
-
-                $this->distance = $this->calculateDistance(
-                    $this->latitude,
-                    $this->longitude,
-                    $schedule->latitude,
-                    $schedule->longitude
-                );
-
-                if ($this->distance > $schedule->radius_meters) {
-                    session()->flash('error', 'Absensi ditolak. Anda berada di luar radius kantor (Jarak Anda: ' . round($this->distance) . ' meter, Radius maksimal: ' . $schedule->radius_meters . ' meter).');
-                    return;
-                }
+            // 4. Validate photo
+            if (empty($this->photo)) {
+                session()->flash('error', 'Anda wajib mengambil foto absensi terlebih dahulu.');
+                return;
             }
+
+            $photoPath = $this->savePhoto($this->photo, 'check_in');
 
             // 5. Calculate lateness
             $limitTime = Carbon::parse($today . ' ' . $schedule->start_time)->addMinutes($schedule->late_tolerance_minutes);
@@ -110,9 +96,7 @@ new class extends Component
                 ],
                 [
                     'check_in_at' => $now,
-                    'check_in_latitude' => $this->latitude,
-                    'check_in_longitude' => $this->longitude,
-                    'check_in_accuracy' => $this->accuracy,
+                    'check_in_photo_path' => $photoPath,
                     'check_in_ip' => request()->ip(),
                     'check_in_user_agent' => request()->userAgent(),
                     'status' => $status,
@@ -122,6 +106,7 @@ new class extends Component
             );
 
             $this->notes = '';
+            $this->photo = null;
             session()->flash('success', 'Absen masuk berhasil direkam! Status: ' . ($status === AttendanceStatus::LATE ? 'Terlambat' : 'Hadir'));
 
         } catch (\Exception $e) {
@@ -177,36 +162,23 @@ new class extends Component
                 return;
             }
 
-            // 4. Validate location if enabled
-            if ($schedule->location_validation_enabled) {
-                if (is_null($this->latitude) || is_null($this->longitude)) {
-                    session()->flash('error', 'Lokasi tidak terdeteksi. Silakan izinkan akses GPS di browser Anda.');
-                    return;
-                }
-
-                $this->distance = $this->calculateDistance(
-                    $this->latitude,
-                    $this->longitude,
-                    $schedule->latitude,
-                    $schedule->longitude
-                );
-
-                if ($this->distance > $schedule->radius_meters) {
-                    session()->flash('error', 'Absensi ditolak. Anda berada di luar radius kantor (Jarak Anda: ' . round($this->distance) . ' meter, Radius maksimal: ' . $schedule->radius_meters . ' meter).');
-                    return;
-                }
+            // 4. Validate photo
+            if (empty($this->photo)) {
+                session()->flash('error', 'Anda wajib mengambil foto absensi kepulangan terlebih dahulu.');
+                return;
             }
+
+            $photoPath = $this->savePhoto($this->photo, 'check_out');
 
             // 5. Update attendance for check-out
             $attendance->update([
                 'check_out_at' => $now,
-                'check_out_latitude' => $this->latitude,
-                'check_out_longitude' => $this->longitude,
-                'check_out_accuracy' => $this->accuracy,
+                'check_out_photo_path' => $photoPath,
                 'check_out_ip' => request()->ip(),
                 'check_out_user_agent' => request()->userAgent(),
             ]);
 
+            $this->photo = null;
             session()->flash('success', 'Absen pulang berhasil direkam! Selamat beristirahat.');
 
         } catch (\Exception $e) {
@@ -225,39 +197,24 @@ new class extends Component
             ->first();
 
         $attendance = null;
-        $isWithinRadius = false;
-        $distanceComputed = null;
 
         if ($schedule) {
             $attendance = Attendance::where('user_id', $user->id)
                 ->where('schedule_id', $schedule->id)
                 ->whereDate('attendance_date', $schedule->attendance_date)
                 ->first();
-
-            // Calculate distance reactively on view rendering if coords exist
-            if ($schedule->location_validation_enabled && !is_null($this->latitude) && !is_null($this->longitude)) {
-                $distanceComputed = $this->calculateDistance(
-                    $this->latitude,
-                    $this->longitude,
-                    $schedule->latitude,
-                    $schedule->longitude
-                );
-                $isWithinRadius = $distanceComputed <= $schedule->radius_meters;
-                $this->distance = $distanceComputed;
-            }
         }
 
         return [
             'schedule' => $schedule,
             'attendance' => $attendance,
-            'isWithinRadius' => $isWithinRadius,
-            'distanceComputed' => $distanceComputed,
         ];
     }
 };
 ?>
 
-<div class="max-w-2xl mx-auto space-y-6">
+<div class="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+    <div class="lg:col-span-2 space-y-6">
     <!-- Clock Widget Card -->
     <div class="relative bg-gradient-to-br from-teal-700 via-teal-800 to-emerald-800 text-white rounded-[1.5rem] shadow-xl p-8 overflow-hidden text-center">
         <!-- background pattern -->
@@ -276,84 +233,7 @@ new class extends Component
         </div>
     </div>
 
-    <!-- Location Status Banner -->
-    <div class="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4" x-data="{ showHelp: false }" x-init="setTimeout(() => showHelp = true, 3000)">
-        <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl flex items-center justify-center bg-teal-50 text-teal-600 border border-teal-100">
-                <i class="fa-solid fa-location-dot text-lg"></i>
-            </div>
-            <div>
-                <h3 class="text-sm font-bold text-gray-900">Validasi Geolocation</h3>
-                <p class="text-xs text-gray-500 font-semibold">Memastikan koordinat absensi Anda presisi.</p>
-            </div>
-        </div>
 
-        <!-- Location Status Body -->
-        <div class="border-t border-gray-50 pt-4 text-sm font-medium">
-            @if ($locationError)
-                <div class="p-4 bg-red-50 border border-red-100 rounded-xl text-red-700 flex items-start gap-3">
-                    <i class="fa-solid fa-triangle-exclamation text-lg mt-0.5"></i>
-                    <div>
-                        <p class="font-bold">Akses GPS Gagal</p>
-                        <p class="text-xs text-red-600/90 mt-0.5">{{ $locationError }}</p>
-                    </div>
-                </div>
-            @elseif (is_null($latitude) || is_null($longitude))
-                <div class="p-4 bg-amber-50 border border-amber-100 rounded-xl text-amber-800 flex flex-col gap-2">
-                    <div class="flex items-center gap-3 animate-pulse">
-                        <i class="fa-solid fa-circle-notch fa-spin text-lg"></i>
-                        <div>
-                            <p class="font-bold">Mencari Koordinat...</p>
-                            <p class="text-xs text-amber-700 mt-0.5">Silakan berikan izin akses lokasi jika muncul dialog browser.</p>
-                        </div>
-                    </div>
-                    <div x-show="showHelp" class="mt-2 text-xs border-t border-amber-200/50 pt-2 text-amber-950 font-normal space-y-1.5" x-cloak>
-                        <p class="font-bold"><i class="fa-solid fa-circle-info mr-1"></i> Jika pencarian lokasi memakan waktu lama:</p>
-                        <ul class="list-disc pl-4 space-y-1 text-amber-900/95">
-                            <li>Klik ikon <strong>gembok / info bulat (i)</strong> di sebelah kiri alamat URL browser Anda (dekat <code>http://127.0.0.1:8000</code>), lalu pastikan izin <strong>Lokasi (Location)</strong> diatur ke <strong>Izinkan (Allow)</strong>.</li>
-                            <li>Pastikan <strong>Layanan Lokasi (Location Services)</strong> di pengaturan Windows/perangkat HP Anda sudah dalam posisi <strong>Aktif / ON</strong>.</li>
-                            <li>Koneksi internet Anda saat ini mungkin sedang lambat dalam mendeteksi koordinat IP/Wifi.</li>
-                        </ul>
-                    </div>
-                </div>
-            @else
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div class="p-3.5 bg-gray-50/50 border border-gray-100 rounded-xl text-gray-700 space-y-1">
-                        <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Koordinat Anda</p>
-                        <p class="text-xs font-mono font-bold text-gray-800">
-                            Lat: {{ round($latitude, 6) }}, Lon: {{ round($longitude, 6) }}
-                        </p>
-                        <p class="text-[10px] text-gray-400">Akurasi: ±{{ round($accuracy, 1) }}m</p>
-                    </div>
-
-                    @if ($schedule && $schedule->location_validation_enabled)
-                        <div class="p-3.5 border rounded-xl flex flex-col justify-center {{ $isWithinRadius ? 'bg-green-50/50 border-green-100 text-green-800' : 'bg-red-50/50 border-red-100 text-red-800' }}">
-                            <div class="flex items-center gap-2 mb-1">
-                                @if ($isWithinRadius)
-                                    <i class="fa-solid fa-circle-check text-green-600 text-base"></i>
-                                    <span class="font-bold">Di Dalam Radius</span>
-                                @else
-                                    <i class="fa-solid fa-circle-xmark text-red-600 text-base"></i>
-                                    <span class="font-bold">Di Luar Radius</span>
-                                @endif
-                            </div>
-                            <p class="text-xs text-gray-500 font-medium">
-                                Jarak: <span class="font-bold text-gray-900">{{ round($distanceComputed) }} meter</span> dari kantor (Maks: {{ $schedule->radius_meters }}m)
-                            </p>
-                        </div>
-                    @else
-                        <div class="p-3.5 bg-blue-50/50 border border-blue-100 text-blue-800 rounded-xl flex items-center gap-2">
-                            <i class="fa-solid fa-info-circle text-lg"></i>
-                            <div>
-                                <p class="font-bold text-xs">Jadwal Tanpa Validasi Geolocation</p>
-                                <p class="text-[10px] text-gray-500 mt-0.5">Anda dapat absen dari lokasi mana saja.</p>
-                            </div>
-                        </div>
-                    @endif
-                </div>
-            @endif
-        </div>
-    </div>
 
     <!-- Action Forms Card -->
     <div class="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-6">
@@ -371,6 +251,36 @@ new class extends Component
                 <p class="text-sm font-semibold">{{ session('error') }}</p>
             </div>
         @endif
+        
+        <!-- Live Camera Area (Always Accessible) -->
+        <div class="space-y-3 pb-4 border-b border-gray-100" x-data="cameraApp()" x-init="initCamera()">
+            <div class="flex justify-between items-center ml-1">
+                <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider">Tes & Tangkapan Kamera</h4>
+                <span class="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-bold" x-show="photoTaken" x-cloak>Tersimpan Sementara</span>
+            </div>
+            <div class="relative bg-gray-900 rounded-2xl overflow-hidden aspect-video border-2" :class="photoTaken ? 'border-emerald-500 shadow-md shadow-emerald-500/20' : 'border-gray-200'">
+                <video x-ref="video" class="w-full h-full object-cover" autoplay playsinline x-show="!photoTaken"></video>
+                <canvas x-ref="canvas" class="hidden"></canvas>
+                <img x-ref="photoResult" class="w-full h-full object-cover" x-show="photoTaken" />
+                
+                <div class="absolute inset-0 flex items-center justify-center bg-gray-900/80" x-show="permissionDenied" x-cloak>
+                    <div class="text-center text-white space-y-2 p-4">
+                        <i class="fa-solid fa-camera-slash text-3xl text-red-500"></i>
+                        <p class="text-sm font-bold">Kamera Gagal Diakses</p>
+                        <p class="text-xs text-gray-300" x-text="errorMessage || 'Mohon izinkan akses kamera di pengaturan browser.'"></p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flex gap-2">
+                <button type="button" @click="takePhoto" x-show="!photoTaken" :disabled="permissionDenied" class="w-full py-2.5 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm rounded-xl transition-colors disabled:opacity-50">
+                    <i class="fa-solid fa-camera mr-1"></i> Ambil Foto
+                </button>
+                <button type="button" @click="retakePhoto" x-show="photoTaken" x-cloak class="w-full py-2.5 px-4 bg-amber-50 hover:bg-amber-100 text-amber-700 font-bold text-sm rounded-xl transition-colors">
+                    <i class="fa-solid fa-rotate-right mr-1"></i> Foto Ulang
+                </button>
+            </div>
+        </div>
 
         @if (!$schedule)
             <!-- No Schedule -->
@@ -400,15 +310,15 @@ new class extends Component
                                 placeholder="Tulis catatan jika telat, berhalangan, atau lainnya..."></textarea>
                         </div>
 
-                        <!-- Check-in Button -->
                         @php
                             $now = Carbon::now();
                             $checkInStart = Carbon::parse($schedule->attendance_date->toDateString() . ' ' . $schedule->check_in_start);
                             $checkInEnd = Carbon::parse($schedule->attendance_date->toDateString() . ' ' . $schedule->check_in_end);
                             $timeValid = $now->between($checkInStart, $checkInEnd);
-                            $locationValid = !$schedule->location_validation_enabled || ($latitude && $longitude && $isWithinRadius);
-                            $canCheckIn = $timeValid && $locationValid;
+                            $canCheckIn = $timeValid && !empty($photo);
                         @endphp
+                        
+
                         
                         <button wire:click="checkIn" @disabled(!$canCheckIn)
                             class="w-full flex justify-center items-center py-4 px-6 border border-transparent rounded-xl shadow-lg text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none transition-all duration-200 transform hover:-translate-y-0.5 disabled:pointer-events-none gap-2">
@@ -419,13 +329,9 @@ new class extends Component
                             <p class="text-center text-xs text-red-500 font-semibold mt-2">
                                 <i class="fa-solid fa-triangle-exclamation mr-1"></i> Waktu absensi di luar batas check-in dibuka.
                             </p>
-                        @elseif ($schedule->location_validation_enabled && (!$latitude || !$longitude))
+                        @elseif (empty($photo))
                             <p class="text-center text-xs text-amber-600 font-semibold mt-2">
-                                <i class="fa-solid fa-triangle-exclamation mr-1"></i> Menunggu deteksi koordinat GPS aktif...
-                            </p>
-                        @elseif ($schedule->location_validation_enabled && !$isWithinRadius)
-                            <p class="text-center text-xs text-red-500 font-semibold mt-2">
-                                <i class="fa-solid fa-triangle-exclamation mr-1"></i> Lokasi Anda berada di luar radius kantor yang diizinkan.
+                                <i class="fa-solid fa-camera mr-1"></i> Foto absensi belum diambil.
                             </p>
                         @endif
                     </div>
@@ -448,15 +354,15 @@ new class extends Component
                             <p class="text-xs text-gray-400 font-medium">Jendela check-out dibuka mulai: {{ \Carbon\Carbon::parse($schedule->check_out_start)->format('H:i') }} - {{ \Carbon\Carbon::parse($schedule->check_out_end)->format('H:i') }} WIB.</p>
                         </div>
 
-                        <!-- Check-out Button -->
                         @php
                             $now = Carbon::now();
                             $checkOutStart = Carbon::parse($schedule->attendance_date->toDateString() . ' ' . $schedule->check_out_start);
                             $checkOutEnd = Carbon::parse($schedule->attendance_date->toDateString() . ' ' . $schedule->check_out_end);
                             $timeValidOut = $now->between($checkOutStart, $checkOutEnd);
-                            $locationValidOut = !$schedule->location_validation_enabled || ($latitude && $longitude && $isWithinRadius);
-                            $canCheckOut = $timeValidOut && $locationValidOut;
+                            $canCheckOut = $timeValidOut && !empty($photo);
                         @endphp
+                        
+
                         
                         <button wire:click="checkOut" @disabled(!$canCheckOut)
                             class="w-full flex justify-center items-center py-4 px-6 border border-transparent rounded-xl shadow-lg text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none transition-all duration-200 transform hover:-translate-y-0.5 disabled:pointer-events-none gap-2">
@@ -467,13 +373,9 @@ new class extends Component
                             <p class="text-center text-xs text-red-500 font-semibold mt-2">
                                 <i class="fa-solid fa-triangle-exclamation mr-1"></i> Waktu check-out belum dibuka / sudah ditutup. Jam pulang dimulai pukul {{ \Carbon\Carbon::parse($schedule->check_out_start)->format('H:i') }} WIB.
                             </p>
-                        @elseif ($schedule->location_validation_enabled && (!$latitude || !$longitude))
+                        @elseif (empty($photo))
                             <p class="text-center text-xs text-amber-600 font-semibold mt-2">
-                                <i class="fa-solid fa-triangle-exclamation mr-1"></i> Menunggu deteksi koordinat GPS aktif...
-                            </p>
-                        @elseif ($schedule->location_validation_enabled && !$isWithinRadius)
-                            <p class="text-center text-xs text-red-500 font-semibold mt-2">
-                                <i class="fa-solid fa-triangle-exclamation mr-1"></i> Lokasi Anda berada di luar radius kantor yang diizinkan.
+                                <i class="fa-solid fa-camera mr-1"></i> Foto absensi kepulangan belum diambil.
                             </p>
                         @endif
                     </div>
@@ -515,6 +417,66 @@ new class extends Component
             </div>
         @endif
     </div>
+    </div>
+    
+    <!-- Right Column: Tutorial -->
+    <div class="lg:col-span-1 space-y-6 sticky top-6">
+        <div class="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-5">
+            <div>
+                <h3 class="text-sm font-bold text-gray-800 flex items-center gap-2">
+                    <i class="fa-solid fa-circle-info text-blue-500"></i>
+                    Panduan Absensi
+                </h3>
+                <p class="text-xs text-gray-500 mt-1">Ikuti langkah berikut untuk merekam kehadiran dengan benar.</p>
+            </div>
+            
+            <div class="space-y-4 relative before:absolute before:inset-0 before:ml-3.5 before:-translate-x-px before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 before:to-transparent">
+                
+                <!-- Step 1 -->
+                <div class="relative flex items-start gap-4">
+                    <div class="flex items-center justify-center w-8 h-8 rounded-full bg-blue-100 text-blue-600 font-bold text-xs ring-4 ring-white z-10 shrink-0">1</div>
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 w-full">
+                        <h4 class="text-xs font-bold text-gray-800">Cek Waktu</h4>
+                        <p class="text-[11px] text-gray-500 mt-1 leading-relaxed">Pastikan Anda absen pada jadwal buka. Absen akan ditutup jika di luar batas jam.</p>
+                    </div>
+                </div>
+
+                <!-- Step 2 -->
+                <div class="relative flex items-start gap-4">
+                    <div class="flex items-center justify-center w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 font-bold text-xs ring-4 ring-white z-10 shrink-0">2</div>
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 w-full">
+                        <h4 class="text-xs font-bold text-gray-800">Izinkan Kamera</h4>
+                        <p class="text-[11px] text-gray-500 mt-1 leading-relaxed">Browser akan meminta izin kamera. Pastikan Anda klik <span class="font-bold text-gray-700">Allow</span> atau <span class="font-bold text-gray-700">Izinkan</span>.</p>
+                    </div>
+                </div>
+
+                <!-- Step 3 -->
+                <div class="relative flex items-start gap-4">
+                    <div class="flex items-center justify-center w-8 h-8 rounded-full bg-purple-100 text-purple-600 font-bold text-xs ring-4 ring-white z-10 shrink-0">3</div>
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 w-full">
+                        <h4 class="text-xs font-bold text-gray-800">Ambil Foto Wajah</h4>
+                        <p class="text-[11px] text-gray-500 mt-1 leading-relaxed">Posisikan wajah di kamera, lalu klik tombol abu-abu <span class="font-bold text-gray-700">Ambil Foto</span>.</p>
+                    </div>
+                </div>
+
+                <!-- Step 4 -->
+                <div class="relative flex items-start gap-4">
+                    <div class="flex items-center justify-center w-8 h-8 rounded-full bg-amber-100 text-amber-600 font-bold text-xs ring-4 ring-white z-10 shrink-0">4</div>
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 w-full">
+                        <h4 class="text-xs font-bold text-gray-800">Kirim Absensi</h4>
+                        <p class="text-[11px] text-gray-500 mt-1 leading-relaxed">Klik tombol <span class="font-bold text-gray-700">Absen Masuk</span> atau <span class="font-bold text-gray-700">Absen Pulang</span> untuk merekam kehadiran.</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="p-3 bg-red-50 border border-red-100 rounded-xl">
+                <p class="text-[11px] text-red-700 font-semibold leading-relaxed">
+                    <i class="fa-solid fa-triangle-exclamation mr-1"></i>
+                    Sistem merekam data waktu dan gambar secara real-time. Dilarang melakukan kecurangan.
+                </p>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -533,77 +495,59 @@ new class extends Component
     updateClock(); // run immediately
 </script>
 
-@script
 <script>
-    // Browser HTML5 Geolocation Watcher
-    let watchId = null;
-
-    function getGPSLocation() {
-        if (!navigator.geolocation) {
-            $wire.set('locationError', "Browser Anda tidak mendukung deteksi lokasi.");
-            return;
-        }
-
-        const highAccuracyOptions = {
-            enableHighAccuracy: true,
-            timeout: 3000, // 3 seconds timeout
-            maximumAge: 10000 // allow 10s old cached position
-        };
-
-        const lowAccuracyOptions = {
-            enableHighAccuracy: false,
-            timeout: 8000,
-            maximumAge: 30000
-        };
-
-        function startWatching(options) {
-            if (watchId) {
-                navigator.geolocation.clearWatch(watchId);
+    function cameraApp() {
+        return {
+            stream: null,
+            photoTaken: false,
+            permissionDenied: false,
+            errorMessage: '',
+            initCamera() {
+                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                    // Try with specific facing mode first
+                    navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } })
+                        .then(stream => {
+                            this.stream = stream;
+                            this.$refs.video.srcObject = stream;
+                        })
+                        .catch(err => {
+                            console.warn("User facing mode failed, trying default camera...", err);
+                            // Fallback to any available camera (fixes OverconstrainedError on PC)
+                            navigator.mediaDevices.getUserMedia({ video: true })
+                                .then(stream => {
+                                    this.stream = stream;
+                                    this.$refs.video.srcObject = stream;
+                                })
+                                .catch(fallbackErr => {
+                                    console.error("Camera access totally denied:", fallbackErr);
+                                    this.permissionDenied = true;
+                                    this.errorMessage = fallbackErr.name + ": " + fallbackErr.message;
+                                });
+                        });
+                } else {
+                    this.permissionDenied = true;
+                    this.errorMessage = "Browser Anda tidak mendukung akses kamera (HTTPS diperlukan).";
+                }
+            },
+            takePhoto() {
+                const video = this.$refs.video;
+                const canvas = this.$refs.canvas;
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                this.$refs.photoResult.src = dataUrl;
+                this.photoTaken = true;
+                this.$wire.set('photo', dataUrl);
+                // Matikan sementara stream kamera utama jika mau
+                // video.pause(); 
+            },
+            retakePhoto() {
+                this.photoTaken = false;
+                this.$wire.set('photo', null);
+                this.$refs.photoResult.src = '';
+                // this.$refs.video.play();
             }
-            watchId = navigator.geolocation.watchPosition(
-                (position) => {
-                    $wire.set('latitude', position.coords.latitude);
-                    $wire.set('longitude', position.coords.longitude);
-                    $wire.set('accuracy', position.coords.accuracy);
-                    $wire.set('locationError', '');
-                },
-                (error) => {
-                    if (options.enableHighAccuracy) {
-                        console.warn("High accuracy GPS failed/timed out. Falling back to low accuracy Wifi/IP location...");
-                        startWatching(lowAccuracyOptions);
-                    } else {
-                        let msg = '';
-                        switch(error.code) {
-                            case error.PERMISSION_DENIED:
-                                msg = "Akses lokasi ditolak. Silakan izinkan akses lokasi pada browser Anda.";
-                                break;
-                            case error.POSITION_UNAVAILABLE:
-                                msg = "Informasi lokasi tidak tersedia.";
-                                break;
-                            case error.TIMEOUT:
-                                msg = "Waktu permintaan lokasi habis.";
-                                break;
-                            default:
-                                msg = "Terjadi kesalahan saat mendeteksi lokasi.";
-                        }
-                        $wire.set('locationError', msg);
-                    }
-                },
-                options
-            );
         }
-
-        // Start watching with high accuracy first, fallback if it takes longer than 3s
-        startWatching(highAccuracyOptions);
     }
-
-    getGPSLocation();
-
-    // Clean up watcher on destroy
-    document.addEventListener('livewire:navigating', () => {
-        if (watchId) {
-            navigator.geolocation.clearWatch(watchId);
-        }
-    });
 </script>
-@endscript

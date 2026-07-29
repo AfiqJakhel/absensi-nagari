@@ -7,10 +7,9 @@
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     <!-- FontAwesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- AlpineJS for interactivity (Mobile Menu, Dropdowns) -->
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <!-- ApexCharts for Graphs -->
     <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+    @livewireStyles
 </head>
 <body class="bg-[#f4f7fb] text-gray-800 font-sans antialiased" x-data="{ sidebarOpen: false }">
 
@@ -165,5 +164,6 @@
     </div>
 
     @stack('scripts')
+    @livewireScripts
 </body>
 </html>

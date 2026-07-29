@@ -33,10 +33,10 @@
             <div class="flex flex-col items-center justify-center pt-6 pb-4 px-4 relative z-10">
                 <div class="flex items-center gap-3 mb-3">
                     <img src="{{ asset('images/logo-pesisir.png') }}" alt="Logo Pesisir" class="h-10 w-auto mix-blend-multiply bg-transparent rounded">
-                    <img src="{{ asset('images/logo-pantai.jpg') }}" alt="Logo Nagari" class="h-10 w-auto mix-blend-multiply bg-transparent rounded">
+                    <img src="{{ asset('images/logo-pantai.svg') }}" alt="Logo Nagari" class="h-10 w-auto mix-blend-multiply bg-transparent rounded">
                 </div>
                 <h2 class="text-lg font-bold tracking-wide text-center text-teal-950">Sistem Absensi</h2>
-                <p class="text-[10px] text-teal-800 mt-1 font-medium">Kantor Wali Nagari</p>
+                <p class="text-[10px] text-teal-800 mt-1 font-medium">Kambang Kecamatan Lengayang</p>
             </div>
 
             <!-- Navigation Links -->
@@ -88,12 +88,6 @@
                     </div>
 
                     <div class="flex items-center gap-5">
-                        <!-- Notification Bell -->
-                        <button class="relative text-gray-500 hover:text-emerald-600 transition-colors flex items-center gap-1.5 font-medium text-sm">
-                            <i class="fa-regular fa-bell text-lg"></i>
-                            <span class="hidden md:inline">Notifikasi</span>
-                            <span class="flex h-5 w-5 rounded-full bg-red-500 border border-white text-[10px] items-center justify-center text-white font-bold">2</span>
-                        </button>
 
                         <!-- Profile Dropdown -->
                         <div class="relative" x-data="{ profileOpen: false }" @click.away="profileOpen = false">

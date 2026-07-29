@@ -10,15 +10,42 @@
             <h2 class="text-lg font-bold text-gray-800">Riwayat Absensi - Kantor Wali Nagari</h2>
         </div>
         <div class="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
-            <!-- Calendar Picker (Replacing Pilih Periode) -->
-            <div class="relative w-full sm:w-64">
-                <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400">
+            @php
+                $monthsList = [];
+                for ($i = 0; $i < 12; $i++) {
+                    $date = now()->subMonths($i);
+                    $monthsList[$date->format('Y-m')] = $date->translatedFormat('F Y');
+                }
+            @endphp
+            
+            <!-- Status Filter Dropdown -->
+            <div class="relative w-full sm:w-44">
+                <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400">
+                    <i class="fa-solid fa-filter text-xs"></i>
+                </div>
+                <select class="pl-9 pr-8 py-2.5 bg-white border border-gray-200 hover:border-gray-300 rounded-xl text-sm focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 shadow-sm transition-all duration-200 outline-none text-gray-700 w-full appearance-none font-semibold cursor-pointer">
+                    <option value="">Semua Status</option>
+                    <option value="present">Hadir</option>
+                    <option value="late">Terlambat</option>
+                    <option value="permission_sick">Izin / Sakit</option>
+                    <option value="absent">Alfa (Tidak Hadir)</option>
+                </select>
+                <div class="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-gray-400">
+                    <i class="fa-solid fa-chevron-down text-xs"></i>
+                </div>
+            </div>
+
+            <!-- Month Picker -->
+            <div class="relative w-full sm:w-48">
+                <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400">
                     <i class="fa-regular fa-calendar text-sm"></i>
                 </div>
-                <select class="pl-10 pr-8 py-2.5 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none text-gray-700 w-full appearance-none font-medium">
-                    <option>01 Juli 2026 - 17 Juli 2026</option>
+                <select class="pl-10 pr-8 py-2.5 bg-white border border-gray-200 hover:border-gray-300 rounded-xl text-sm focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 shadow-sm transition-all duration-200 outline-none text-gray-700 w-full appearance-none font-semibold cursor-pointer">
+                    @foreach ($monthsList as $val => $label)
+                        <option value="{{ $val }}">{{ $label }}</option>
+                    @endforeach
                 </select>
-                <div class="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-gray-400">
+                <div class="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-gray-400">
                     <i class="fa-solid fa-chevron-down text-xs"></i>
                 </div>
             </div>

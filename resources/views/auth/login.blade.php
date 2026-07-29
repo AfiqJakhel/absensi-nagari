@@ -21,7 +21,7 @@
                 <div class="text-center mb-6 sm:mb-8 md:mb-10">
                     <div class="flex items-center justify-center gap-3 sm:gap-4 md:gap-6 mb-4 sm:mb-6 md:mb-8">
                         <img src="{{ asset('images/logo-pesisir.png') }}" alt="Logo Pesisir Selatan" class="h-10 sm:h-16 md:h-20 w-auto object-contain mix-blend-multiply">
-                        <img src="{{ asset('images/logo-pantai.jpg') }}" alt="Logo Nagari" class="h-10 sm:h-16 md:h-20 w-auto object-contain mix-blend-multiply">
+                        <img src="{{ asset('images/logo-pantai.svg') }}" alt="Logo Nagari" class="h-10 sm:h-16 md:h-20 w-auto object-contain mix-blend-multiply">
                     </div>
                     <h1 class="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 mb-1 sm:mb-2">Sistem Absensi</h1>
                     <p class="text-gray-700 text-sm sm:text-base md:text-lg font-medium">Kantor Wali Nagari</p>
@@ -84,12 +84,6 @@
                         </button>
                     </div>
                 </form>
-
-                <!-- Footer Info -->
-                <div class="mt-8 sm:mt-12 text-center text-xs text-white/90 drop-shadow-sm font-medium">
-                    <p>&copy; {{ date('Y') }} Pemerintah Nagari.</p>
-                    <p class="mt-1">PROFESIONAL &bull; AKUNTABEL &bull; TRANSPARAN</p>
-                </div>
             </div>
         </div>
     </div>

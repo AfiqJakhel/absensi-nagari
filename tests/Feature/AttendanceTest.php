@@ -109,10 +109,10 @@ class AttendanceTest extends TestCase
         ]);
         $schedule->users()->attach($this->employee->id);
 
-        // Perform check-in (simulate no late - override current time or check condition)
-        // If checking in within the schedule limits, it should write to DB.
+        // Provide dummy base64 photo
         Livewire::actingAs($this->employee)
             ->test('pegawai.absensi-form')
+            ->set('photo', 'data:image/jpeg;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')
             ->call('checkIn');
 
         $attendance = Attendance::first();
@@ -121,36 +121,7 @@ class AttendanceTest extends TestCase
         $this->assertEquals($this->employee->id, $attendance->user_id);
     }
 
-    public function test_check_in_fails_if_outside_radius(): void
-    {
-        // Today schedule with location validation enabled
-        // Office is at -1.583488, 100.865324
-        $schedule = Schedule::create([
-            'name' => 'Jadwal GPS',
-            'attendance_date' => $this->today,
-            'start_time' => '08:00:00',
-            'end_time' => '16:30:00',
-            'check_in_start' => Carbon::now()->subHour()->format('H:i:s'),
-            'check_in_end' => Carbon::now()->addHour()->format('H:i:s'),
-            'check_out_start' => '16:00:00',
-            'check_out_end' => '20:00:00',
-            'location_validation_enabled' => true,
-            'latitude' => -1.583488,
-            'longitude' => 100.865324,
-            'radius_meters' => 100,
-            'is_active' => true,
-        ]);
-        $schedule->users()->attach($this->employee->id);
 
-        // Test with coordinate far away (e.g. Padang, approx 1 degree away)
-        Livewire::actingAs($this->employee)
-            ->test('pegawai.absensi-form')
-            ->set('latitude', -0.94924)
-            ->set('longitude', 100.35427)
-            ->call('checkIn');
-
-        $this->assertNull(Attendance::first());
-    }
 
     public function test_check_out_fails_if_before_checkout_start_time(): void
     {

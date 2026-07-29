@@ -77,10 +77,18 @@ new class extends Component
         }
 
         // 3. Query monthly history
-        $historyQuery = $user->attendances()
+        $historyData = $user->attendances()
             ->whereYear('attendance_date', Carbon::parse($this->monthFilter)->year)
-            ->whereMonth('attendance_date', Carbon::parse($this->monthFilter)->month);
+            ->whereMonth('attendance_date', Carbon::parse($this->monthFilter)->month)
+            ->get()
+            ->keyBy(fn($item) => $item->attendance_date->toDateString());
 
+        $monthDate = Carbon::parse($this->monthFilter);
+        $startOfMonth = $monthDate->copy()->startOfMonth();
+        $daysInMonth = $monthDate->daysInMonth;
+        // 0 = Sunday, 1 = Monday. We want Monday to be first column in grid.
+        $startDayOfWeek = $startOfMonth->dayOfWeekIso; // 1 (Mon) to 7 (Sun)
+        
         return [
             'greeting' => $this->getGreeting(),
             'schedule' => $schedule,
@@ -88,7 +96,9 @@ new class extends Component
             'lateness' => $lateness,
             'monthsList' => $monthsList,
             'todayAttendance' => $todayAttendance,
-            'history' => $historyQuery->latest('attendance_date')->paginate(10),
+            'historyData' => $historyData,
+            'startDayOfWeek' => $startDayOfWeek,
+            'daysInMonth' => $daysInMonth,
         ];
     }
 };
@@ -119,59 +129,57 @@ new class extends Component
                 <div class="h-4 w-px bg-gray-300"></div>
                 <div class="flex items-center gap-2">
                     <i class="fa-regular fa-clock text-emerald-600 text-base"></i>
-                    <span>{{ \Illuminate\Support\Carbon::now()->translatedFormat('H:i') }} WIB</span>
+                    <span id="realtime-clock">{{ \Illuminate\Support\Carbon::now()->translatedFormat('H:i') }} WIB</span>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- Attendance Information Cards -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        <!-- Jadwal Masuk -->
-        <div class="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4 transition-all hover:shadow-md duration-200">
-            <div class="w-12 h-12 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600">
-                <i class="fa-regular fa-clock text-xl"></i>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+        <!-- Jam Masuk (Check-in) -->
+        @php
+            $masukBorderClass = 'border border-gray-100';
+            $masukIconBg = 'bg-emerald-50';
+            $masukIconText = 'text-emerald-600';
+            $masukIconBorder = 'border-emerald-100';
+            
+            if ($todayAttendance && $todayAttendance->check_in_at) {
+                if ($todayAttendance->status->value === 'present') {
+                    $masukBorderClass = 'border-2 border-blue-500';
+                    $masukIconBg = 'bg-blue-50';
+                    $masukIconText = 'text-blue-600';
+                    $masukIconBorder = 'border-blue-100';
+                } elseif ($todayAttendance->status->value === 'late') {
+                    $masukBorderClass = 'border-2 border-red-500';
+                    $masukIconBg = 'bg-red-50';
+                    $masukIconText = 'text-red-600';
+                    $masukIconBorder = 'border-red-100';
+                }
+            }
+        @endphp
+        <div class="bg-white p-5 rounded-2xl {{ $masukBorderClass }} shadow-sm flex items-center gap-4 transition-all hover:shadow-md duration-200">
+            <div class="w-12 h-12 rounded-xl {{ $masukIconBg }} border {{ $masukIconBorder }} flex items-center justify-center {{ $masukIconText }}">
+                <i class="fa-solid fa-right-to-bracket text-xl"></i>
             </div>
             <div>
-                <p class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-0.5">Jadwal Masuk</p>
+                <p class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-0.5">Jam Masuk (Check-in)</p>
                 <p class="text-base font-bold text-gray-800">
-                    {{ $schedule ? \Illuminate\Support\Carbon::parse($schedule->start_time)->format('H:i') . ' WIB' : '-' }}
+                    {{ $todayAttendance && $todayAttendance->check_in_at ? \Illuminate\Support\Carbon::parse($todayAttendance->check_in_at)->format('H:i') . ' WIB' : '-' }}
                 </p>
             </div>
         </div>
 
-        <!-- Jadwal Pulang -->
+        <!-- Jam Pulang (Check-out) -->
         <div class="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4 transition-all hover:shadow-md duration-200">
             <div class="w-12 h-12 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-500">
-                <i class="fa-regular fa-clock text-xl"></i>
+                <i class="fa-solid fa-right-from-bracket text-xl"></i>
             </div>
             <div>
-                <p class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-0.5">Jadwal Pulang</p>
+                <p class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-0.5">Jam Pulang (Check-out)</p>
                 <p class="text-base font-bold text-gray-800">
-                    {{ $schedule ? \Illuminate\Support\Carbon::parse($schedule->end_time)->format('H:i') . ' WIB' : '-' }}
+                    {{ $todayAttendance && $todayAttendance->check_out_at ? \Illuminate\Support\Carbon::parse($todayAttendance->check_out_at)->format('H:i') . ' WIB' : '-' }}
                 </p>
-            </div>
-        </div>
-
-        <!-- Total Jam Kerja -->
-        <div class="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4 transition-all hover:shadow-md duration-200">
-            <div class="w-12 h-12 rounded-xl bg-purple-50 border border-purple-100 flex items-center justify-center text-purple-600">
-                <i class="fa-solid fa-business-time text-xl"></i>
-            </div>
-            <div>
-                <p class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-0.5">Total Jam Kerja</p>
-                <p class="text-base font-bold text-gray-800">{{ $workingHours }}</p>
-            </div>
-        </div>
-
-        <!-- Keterlambatan -->
-        <div class="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4 transition-all hover:shadow-md duration-200">
-            <div class="w-12 h-12 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600">
-                <i class="fa-solid fa-circle-exclamation text-xl"></i>
-            </div>
-            <div>
-                <p class="text-xs text-gray-400 font-bold uppercase tracking-wider mb-0.5">Keterlambatan</p>
-                <p class="text-base font-bold text-gray-800">{{ $lateness }}</p>
             </div>
         </div>
     </div>
@@ -200,97 +208,110 @@ new class extends Component
                     </div>
                 </div>
 
-                <button class="px-4 py-2.5 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 shadow-sm transition-colors whitespace-nowrap">
-                    <i class="fa-solid fa-download text-gray-500"></i> Export
-                </button>
             </div>
         </div>
 
-        <!-- Table Area -->
-        <div class="overflow-x-auto">
-            <table class="w-full text-left text-sm text-gray-600 whitespace-nowrap">
-                <thead class="text-xs text-gray-500 uppercase bg-gray-50/50 border-b border-gray-100">
-                    <tr>
-                        <th class="px-6 py-4 font-semibold">Tanggal</th>
-                        <th class="px-6 py-4 font-semibold">Hari</th>
-                        <th class="px-6 py-4 font-semibold text-center">Jam Masuk</th>
-                        <th class="px-6 py-4 font-semibold text-center">Jam Pulang</th>
-                        <th class="px-6 py-4 font-semibold text-center">Durasi Kerja</th>
-                        <th class="px-6 py-4 font-semibold text-center">Keterlambatan</th>
-                        <th class="px-6 py-4 font-semibold text-center">Status</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-50">
-                    @forelse ($history as $record)
-                        <tr>
-                            <td class="px-6 py-4 text-sm font-semibold text-gray-900">
-                                {{ $record->attendance_date->translatedFormat('d F Y') }}
-                            </td>
-                            <td class="px-6 py-4 text-sm text-gray-500">
-                                {{ $record->attendance_date->translatedFormat('l') }}
-                            </td>
-                            <td class="px-6 py-4 text-sm text-center text-gray-600 font-medium">
-                                {{ $record->check_in_at ? $record->check_in_at->format('H:i') . ' WIB' : '-' }}
-                            </td>
-                            <td class="px-6 py-4 text-sm text-center text-gray-600 font-medium">
-                                {{ $record->check_out_at ? $record->check_out_at->format('H:i') . ' WIB' : '-' }}
-                            </td>
-                            <td class="px-6 py-4 text-sm text-center text-gray-500 font-medium">
-                                @if ($record->check_in_at && $record->check_out_at)
-                                    @php
-                                        $checkIn = Carbon::parse($record->check_in_at);
-                                        $checkOut = Carbon::parse($record->check_out_at);
-                                        $hours = $checkIn->diffInHours($checkOut);
-                                        $minutes = $checkIn->diffInMinutes($checkOut) % 60;
-                                    @endphp
-                                    {{ "{$hours} Jam {$minutes} Menit" }}
-                                @elseif ($record->check_in_at)
-                                    <span class="text-amber-600">Aktif</span>
-                                @else
-                                    -
-                                @endif
-                            </td>
-                            <td class="px-6 py-4 text-sm text-center text-gray-500">
-                                {{ $record->late_minutes > 0 ? "{$record->late_minutes} Menit" : '-' }}
-                            </td>
-                            <td class="px-6 py-4 text-center">
-                                @php
-                                    $badgeColor = match($record->status->value) {
-                                        'present' => 'bg-green-50 text-green-700 border-green-200',
-                                        'late' => 'bg-amber-50 text-amber-700 border-amber-200',
-                                        'permission' => 'bg-blue-50 text-blue-700 border-blue-200',
-                                        'sick' => 'bg-purple-50 text-purple-700 border-purple-200',
-                                        'absent' => 'bg-red-50 text-red-700 border-red-200',
-                                        default => 'bg-gray-50 text-gray-700 border-gray-200'
-                                    };
-                                @endphp
-                                <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border {{ $badgeColor }}">
-                                    {{ $record->status->label() }}
-                                </span>
-                            </td>
-                        </tr>
-                    @empty
-                        <tr>
-                            <td colspan="7" class="px-6 py-16 text-center text-gray-400">
-                                <i class="fa-regular fa-folder-open text-4xl mb-3 text-gray-300"></i>
-                                <p class="text-sm font-medium text-gray-500">Belum ada riwayat absensi pada bulan ini.</p>
-                            </td>
-                        </tr>
-                    @endforelse
-                </tbody>
-            </table>
-        </div>
-
-        <!-- Pagination Area -->
-        @if ($history->hasPages())
-            <div class="px-6 py-4 border-t border-gray-100 flex justify-between items-center">
-                <div class="text-sm text-gray-500">
-                    Menampilkan <span class="font-semibold text-gray-900">{{ $history->firstItem() ?? 0 }}</span> sampai <span class="font-semibold text-gray-900">{{ $history->lastItem() ?? 0 }}</span> dari <span class="font-semibold text-gray-900">{{ $history->total() }}</span> data
-                </div>
-                <div>
-                    {{ $history->links() }}
-                </div>
+        <!-- Calendar Area -->
+        <div class="p-6">
+            <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4">Kalender Kehadiran</h4>
+            <div class="grid grid-cols-7 gap-2 text-center mb-2">
+                <div class="text-xs font-bold text-gray-400">Sen</div>
+                <div class="text-xs font-bold text-gray-400">Sel</div>
+                <div class="text-xs font-bold text-gray-400">Rab</div>
+                <div class="text-xs font-bold text-gray-400">Kam</div>
+                <div class="text-xs font-bold text-gray-400">Jum</div>
+                <div class="text-xs font-bold text-gray-400">Sab</div>
+                <div class="text-xs font-bold text-gray-400 text-red-400">Min</div>
             </div>
-        @endif
+            
+            <div class="grid grid-cols-7 gap-2">
+                {{-- Empty cells before start of month --}}
+                @for ($i = 1; $i < $startDayOfWeek; $i++)
+                    <div class="aspect-square rounded-xl bg-gray-50/50 border border-gray-50"></div>
+                @endfor
+
+                {{-- Days of month --}}
+                @for ($day = 1; $day <= $daysInMonth; $day++)
+                    @php
+                        $dateStr = \Illuminate\Support\Carbon::parse($monthFilter)->setDay($day)->toDateString();
+                        $record = $historyData[$dateStr] ?? null;
+                        
+                        $bgClass = 'bg-gray-50 border-gray-100 hover:border-gray-200';
+                        $textClass = 'text-gray-400';
+                        $statusText = '';
+                        
+                        if ($record) {
+                            $textClass = 'text-gray-900';
+                            switch($record->status->value) {
+                                case 'present':
+                                    $bgClass = 'bg-emerald-50 border-emerald-200 shadow-sm shadow-emerald-100/50';
+                                    $statusText = 'Hadir';
+                                    $textClass = 'text-emerald-700';
+                                    break;
+                                case 'late':
+                                    $bgClass = 'bg-amber-50 border-amber-200 shadow-sm shadow-amber-100/50';
+                                    $statusText = 'Telat';
+                                    $textClass = 'text-amber-700';
+                                    break;
+                                case 'permission':
+                                    $bgClass = 'bg-blue-50 border-blue-200 shadow-sm shadow-blue-100/50';
+                                    $statusText = 'Izin';
+                                    $textClass = 'text-blue-700';
+                                    break;
+                                case 'sick':
+                                    $bgClass = 'bg-purple-50 border-purple-200 shadow-sm shadow-purple-100/50';
+                                    $statusText = 'Sakit';
+                                    $textClass = 'text-purple-700';
+                                    break;
+                                case 'absent':
+                                    $bgClass = 'bg-red-50 border-red-200 shadow-sm shadow-red-100/50';
+                                    $statusText = 'Alfa';
+                                    $textClass = 'text-red-700';
+                                    break;
+                            }
+                        }
+                    @endphp
+                    <div class="aspect-square rounded-xl border {{ $bgClass }} p-1 md:p-1.5 flex flex-col justify-between transition-colors relative group">
+                        <span class="text-xs md:text-sm font-bold {{ $textClass }} ml-1">{{ $day }}</span>
+                        @if($record)
+                            <span class="text-[8px] md:text-[9px] font-extrabold uppercase {{ $textClass }} text-center leading-tight">
+                                {{ $statusText }}
+                            </span>
+                            
+                            {{-- Tooltip for time --}}
+                            @if($record->check_in_at)
+                            <div class="absolute inset-x-0 bottom-full mb-2 hidden group-hover:block z-10">
+                                <div class="bg-gray-900 text-white text-[10px] rounded-lg py-1 px-2 whitespace-nowrap text-center shadow-lg">
+                                    {{ \Illuminate\Support\Carbon::parse($record->check_in_at)->format('H:i') }}
+                                    @if($record->check_out_at)
+                                        - {{ \Illuminate\Support\Carbon::parse($record->check_out_at)->format('H:i') }}
+                                    @endif
+                                    <div class="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                                </div>
+                            </div>
+                            @endif
+                        @endif
+                    </div>
+                @endfor
+            </div>
     </div>
+    
+    <script>
+        document.addEventListener('livewire:initialized', () => {
+            const clockEl = document.getElementById('realtime-clock');
+            if (clockEl) {
+                setInterval(() => {
+                    const now = new Date();
+                    // Mengambil waktu GMT+7 (Asia/Jakarta)
+                    const timeString = now.toLocaleTimeString('id-ID', {
+                        timeZone: 'Asia/Jakarta',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false
+                    });
+                    clockEl.textContent = `${timeString.replace('.', ':')} WIB`;
+                }, 1000);
+            }
+        });
+    </script>
 </div>
